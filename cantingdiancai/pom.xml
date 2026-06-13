@@ -5,7 +5,7 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>2.2.2.RELEASE</version>
+        <version>2.3.12.RELEASE</version>
         <relativePath/> <!-- lookup parent from repository -->
     </parent>
     <groupId>com.jlwl</groupId>
@@ -19,6 +19,7 @@
         <java.version>1.8</java.version>
         <fastjson.version>1.2.8</fastjson.version>
         <maven-jar-plugin.version>3.1.1</maven-jar-plugin.version>
+        <testcontainers.version>1.17.6</testcontainers.version>
     </properties>
 
     <dependencies>
@@ -165,18 +166,96 @@
             </exclusions>
         </dependency>
 
+        <!-- Testcontainers: CI 冒烟测试用 MySQL 容器 -->
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers</artifactId>
+            <version>${testcontainers.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>mysql</artifactId>
+            <version>${testcontainers.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>${testcontainers.version}</version>
+            <scope>test</scope>
+        </dependency>
+
 
 
     </dependencies>
 
 
+    <!-- ===================== Maven 构建配置 ===================== -->
     <build>
         <plugins>
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration>
+                    <!-- Layered JAR: 依赖/应用/Snapshot/资源分层，优化 Docker 镜像缓存 -->
+                    <layers>
+                        <enabled>true</enabled>
+                    </layers>
+                </configuration>
             </plugin>
         </plugins>
     </build>
+
+    <!--
+        Reproducible 构建说明:
+        Spring Boot 2.3+ parent 已自动将 project.build.outputTimestamp 设为
+        git commit timestamp，保证相同源码产出相同二进制。
+        若需在无 git 环境（如 CI artifact rebuild）保持可重复，
+        可在 <properties> 中显式添加:
+            <project.build.outputTimestamp>2024-01-01T00:00:00Z</project.build.outputTimestamp>
+    -->
+
+    <!-- ===================== Maven Profiles ===================== -->
+    <profiles>
+        <!-- 开发环境（默认）: 本地直连 MySQL，SQL 调试日志开启 -->
+        <profile>
+            <id>dev</id>
+            <activation>
+                <activeByDefault>true</activeByDefault>
+            </activation>
+            <properties>
+                <spring.profiles.active>dev</spring.profiles.active>
+            </properties>
+        </profile>
+
+        <!-- 生产环境: CI 使用 mvn -Pprod verify -->
+        <profile>
+            <id>prod</id>
+            <properties>
+                <spring.profiles.active>prod</spring.profiles.active>
+            </properties>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.springframework.boot</groupId>
+                        <artifactId>spring-boot-maven-plugin</artifactId>
+                        <configuration>
+                            <layers>
+                                <enabled>true</enabled>
+                            </layers>
+                            <!-- 生产构建排除 devtools，减小镜像体积 -->
+                            <excludes>
+                                <exclude>
+                                    <groupId>org.springframework.boot</groupId>
+                                    <artifactId>spring-boot-devtools</artifactId>
+                                </exclude>
+                            </excludes>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 
 </project>

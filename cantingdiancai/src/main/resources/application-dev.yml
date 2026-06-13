@@ -1,0 +1,20 @@
+# ============================================================
+# DEV 环境 — 本地开发 / 预发联调
+# ============================================================
+
+spring:
+    datasource:
+        driverClassName: com.mysql.cj.jdbc.Driver
+        url: jdbc:mysql://127.0.0.1:3306/cantingdiancai?useUnicode=true&characterEncoding=utf-8&useJDBCCompliantTimezoneShift=true&useLegacyDatetimeCode=false&serverTimezone=GMT%2B8&useSSL=false
+        username: root
+        password: 123456
+
+    servlet:
+        multipart:
+            max-file-size: 1000MB
+            max-request-size: 1000MB
+
+# SQL 调试日志 —— 预发 / 本地开发开启，方便排查
+logging:
+    level:
+        com.dao: debug

@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master, "release/*"]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # 完整历史, reproducible build 需要 git timestamp
+
+      - name: Set up JDK 11
+        uses: actions/setup-java@v4
+        with:
+          java-version: "11"
+          distribution: "temurin"
+          cache: maven
+
+      # Testcontainers 在 GitHub Actions runner 上可直接使用 Docker
+      - name: Build & verify (prod profile)
+        working-directory: cantingdiancai
+        run: mvn -Pprod -B verify
+
+      - name: Upload production JAR
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/heads/release/')
+        uses: actions/upload-artifact@v4
+        with:
+          name: cantingdiancai-jar
+          path: cantingdiancai/target/cantingdiancai-0.0.1-SNAPSHOT.jar
+          retention-days: 30

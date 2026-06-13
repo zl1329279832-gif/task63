@@ -1,0 +1,37 @@
+# ============================================================
+# PROD 环境 — 生产部署
+# 数据源凭据通过环境变量注入，禁止明文写入
+# ============================================================
+
+server:
+    compression:
+        enabled: true
+        mime-types: text/html,text/css,application/javascript,application/json
+        min-response-size: 2048
+
+spring:
+    datasource:
+        driverClassName: com.mysql.cj.jdbc.Driver
+        url: ${DB_URL:jdbc:mysql://127.0.0.1:3306/cantingdiancai?useUnicode=true&characterEncoding=utf-8&useJDBCCompliantTimezoneShift=true&useLegacyDatetimeCode=false&serverTimezone=GMT%2B8&useSSL=false}
+        username: ${DB_USERNAME}
+        password: ${DB_PASSWORD}
+        hikari:
+            maximum-pool-size: ${DB_POOL_SIZE:20}
+            minimum-idle: ${DB_MIN_IDLE:5}
+            connection-timeout: 30000
+            idle-timeout: 600000
+            max-lifetime: 1800000
+            leak-detection-threshold: 60000
+
+    servlet:
+        multipart:
+            max-file-size: 10MB
+            max-request-size: 10MB
+
+# 关闭 SQL 调试日志 —— 生产环境只看 WARN 以上
+logging:
+    level:
+        root: warn
+        com: info
+        com.dao: warn
+        org.springframework.web: warn
