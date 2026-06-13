@@ -1,0 +1,18 @@
+# =============================================
+#  Dev profile -- SQL debug + 1000MB uploads
+# =============================================
+spring:
+    datasource:
+        driverClassName: com.mysql.cj.jdbc.Driver
+        url: jdbc:mysql://127.0.0.1:3306/cantingdiancai?useUnicode=true&characterEncoding=utf-8&useJDBCCompliantTimezoneShift=true&useLegacyDatetimeCode=false&serverTimezone=GMT%2B8&useSSL=false
+        username: root
+        password: 123456
+    servlet:
+      multipart:
+        max-file-size: 1000MB
+        max-request-size: 1000MB
+
+#打印sql语句
+logging:
+  level:
+    com.dao: debug

@@ -1,5 +1,7 @@
-com\controller\ShangpinOrderControllerTest$StatusTransitionTests.class
-com\controller\ShangpinOrderControllerTest$RefundTests.class
 com\controller\ShangpinOrderControllerTest.class
+com\SmokeTest$MysqlInitializer.class
 com\controller\ShangpinOrderControllerTest$OrderTests.class
 com\controller\ShangpinOrderControllerTest$AddTests.class
+com\controller\ShangpinOrderControllerTest$StatusTransitionTests.class
+com\SmokeTest.class
+com\controller\ShangpinOrderControllerTest$RefundTests.class

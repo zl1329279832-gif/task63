@@ -1,0 +1,27 @@
+# =============================================
+#  Prod profile -- 密钥注入、关闭 SQL 日志、限制上传
+# =============================================
+spring:
+    datasource:
+        driverClassName: com.mysql.cj.jdbc.Driver
+        url: jdbc:mysql://${DB_HOST:127.0.0.1}:${DB_PORT:3306}/${DB_NAME:cantingdiancai}?useUnicode=true&characterEncoding=utf-8&useJDBCCompliantTimezoneShift=true&useLegacyDatetimeCode=false&serverTimezone=GMT%2B8&useSSL=true
+        username: ${DB_USER}
+        password: ${DB_PASSWORD}
+        hikari:
+            maximum-pool-size: 20
+            minimum-idle: 5
+            connection-timeout: 30000
+    servlet:
+      multipart:
+        max-file-size: 10MB
+        max-request-size: 10MB
+
+mybatis-plus:
+  global-config:
+    # 生产关闭热刷新
+    refresh-mapper: false
+
+logging:
+  level:
+    com.dao: warn
+    root: info
