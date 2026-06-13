@@ -19,4 +19,8 @@ public interface ShangpinService extends IService<ShangpinEntity> {
     */
      PageUtils queryPage(Map<String, Object> params);
 
+    int deductKucun(Integer id, Integer buyNumber);
+
+    int restoreKucun(Integer id, Integer buyNumber);
+
 }

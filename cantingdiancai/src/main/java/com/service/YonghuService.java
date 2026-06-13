@@ -19,4 +19,8 @@ public interface YonghuService extends IService<YonghuEntity> {
     */
      PageUtils queryPage(Map<String, Object> params);
 
+    int deductBalance(Integer id, Double amount);
+
+    int addBalance(Integer id, Double amount);
+
 }

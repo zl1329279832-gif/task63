@@ -37,5 +37,14 @@ public class YonghuServiceImpl extends ServiceImpl<YonghuDao, YonghuEntity> impl
         return new PageUtils(page);
     }
 
+    @Override
+    public int deductBalance(Integer id, Double amount) {
+        return baseMapper.deductBalance(id, amount);
+    }
+
+    @Override
+    public int addBalance(Integer id, Double amount) {
+        return baseMapper.addBalance(id, amount);
+    }
 
 }

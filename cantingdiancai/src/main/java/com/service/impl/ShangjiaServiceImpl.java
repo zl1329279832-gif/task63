@@ -37,5 +37,14 @@ public class ShangjiaServiceImpl extends ServiceImpl<ShangjiaDao, ShangjiaEntity
         return new PageUtils(page);
     }
 
+    @Override
+    public int addMoney(Integer id, Double amount) {
+        return baseMapper.addMoney(id, amount);
+    }
+
+    @Override
+    public int deductMoney(Integer id, Double amount) {
+        return baseMapper.deductMoney(id, amount);
+    }
 
 }

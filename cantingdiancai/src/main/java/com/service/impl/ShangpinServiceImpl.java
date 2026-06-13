@@ -37,5 +37,14 @@ public class ShangpinServiceImpl extends ServiceImpl<ShangpinDao, ShangpinEntity
         return new PageUtils(page);
     }
 
+    @Override
+    public int deductKucun(Integer id, Integer buyNumber) {
+        return baseMapper.deductKucun(id, buyNumber);
+    }
+
+    @Override
+    public int restoreKucun(Integer id, Integer buyNumber) {
+        return baseMapper.restoreKucun(id, buyNumber);
+    }
 
 }

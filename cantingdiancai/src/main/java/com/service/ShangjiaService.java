@@ -19,4 +19,8 @@ public interface ShangjiaService extends IService<ShangjiaEntity> {
     */
      PageUtils queryPage(Map<String, Object> params);
 
+    int addMoney(Integer id, Double amount);
+
+    int deductMoney(Integer id, Double amount);
+
 }
