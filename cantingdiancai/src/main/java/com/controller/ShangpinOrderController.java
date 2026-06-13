@@ -22,6 +22,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Controller;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 import com.baomidou.mybatisplus.mapper.EntityWrapper;
 import com.baomidou.mybatisplus.mapper.Wrapper;
@@ -323,152 +324,195 @@ public class ShangpinOrderController {
 
 
     /**
-    * 前端保存
+    * 前端保存（单品下单）
     */
+    @Transactional
     @RequestMapping("/add")
     public R add(@RequestBody ShangpinOrderEntity shangpinOrder, HttpServletRequest request){
         logger.debug("add方法:,,Controller:{},,shangpinOrder:{}",this.getClass().getName(),shangpinOrder.toString());
-            ShangpinEntity shangpinEntity = shangpinService.selectById(shangpinOrder.getShangpinId());
-            if(shangpinEntity == null){
-                return R.error(511,"查不到该商品");
-            }
-            // Double shangpinNewMoney = shangpinEntity.getShangpinNewMoney();
 
-            if(false){
-            }
-            else if(shangpinEntity.getShangpinNewMoney() == null){
-                return R.error(511,"现价不能为空");
-            }
-            else if((shangpinEntity.getShangpinKucunNumber() -shangpinOrder.getBuyNumber())<0){
-                return R.error(511,"购买数量不能大于库存数量");
-            }
+        // 明确拒绝积分支付
+        if(shangpinOrder.getShangpinOrderPaymentTypes() != null && shangpinOrder.getShangpinOrderPaymentTypes() == 2){
+            return R.error(511,"暂不支持积分支付");
+        }
 
-            //计算所获得积分
-            Double buyJifen =0.0;
-            Integer userId = (Integer) request.getSession().getAttribute("userId");
-            YonghuEntity yonghuEntity = yonghuService.selectById(userId);
-            if(yonghuEntity == null)
-                return R.error(511,"用户不能为空");
-            if(yonghuEntity.getNewMoney() == null)
-                return R.error(511,"用户金额不能为空");
-            double balance = yonghuEntity.getNewMoney() - shangpinEntity.getShangpinNewMoney()*shangpinOrder.getBuyNumber();//余额
-            if(balance<0)
-                return R.error(511,"余额不够支付");
-            shangpinOrder.setShangpinOrderTypes(101); //设置订单状态为已支付
-            shangpinOrder.setShangpinOrderTruePrice(shangpinEntity.getShangpinNewMoney()*shangpinOrder.getBuyNumber()); //设置实付价格
-            shangpinOrder.setYonghuId(userId); //设置订单支付人id
-            shangpinOrder.setShangpinOrderUuidNumber(String.valueOf(new Date().getTime()));
-            shangpinOrder.setShangpinOrderPaymentTypes(1);
-            shangpinOrder.setInsertTime(new Date());
-            shangpinOrder.setCreateTime(new Date());
-                shangpinEntity.setShangpinKucunNumber( shangpinEntity.getShangpinKucunNumber() -shangpinOrder.getBuyNumber());
-                shangpinService.updateById(shangpinEntity);
-                shangpinOrderService.insert(shangpinOrder);//新增订单
-            //更新第一注册表
-            yonghuEntity.setNewMoney(balance);//设置金额
-            yonghuService.updateById(yonghuEntity);
+        ShangpinEntity shangpinEntity = shangpinService.selectById(shangpinOrder.getShangpinId());
+        if(shangpinEntity == null){
+            return R.error(511,"查不到该商品");
+        }
+        if(shangpinEntity.getShangpinNewMoney() == null){
+            return R.error(511,"现价不能为空");
+        }
+        if(shangpinOrder.getBuyNumber() == null || shangpinOrder.getBuyNumber() <= 0){
+            return R.error(511,"购买数量必须大于0");
+        }
+        if(shangpinEntity.getShangpinKucunNumber() < shangpinOrder.getBuyNumber()){
+            return R.error(511,"购买数量不能大于库存数量");
+        }
 
-            ShangjiaEntity shangjiaEntity = shangjiaService.selectById(shangpinEntity.getShangjiaId());
-            shangjiaEntity.setNewMoney(shangjiaEntity.getNewMoney()+shangpinOrder.getShangpinOrderTruePrice());//动态计算金额
-            shangjiaService.updateById(shangjiaEntity);
+        Integer userId = (Integer) request.getSession().getAttribute("userId");
+        YonghuEntity yonghuEntity = yonghuService.selectById(userId);
+        if(yonghuEntity == null)
+            return R.error(511,"用户不能为空");
+        if(yonghuEntity.getNewMoney() == null)
+            return R.error(511,"用户金额不能为空");
 
-            return R.ok();
+        double totalPrice = new BigDecimal(shangpinEntity.getShangpinNewMoney())
+                .multiply(new BigDecimal(shangpinOrder.getBuyNumber())).doubleValue();
+        double balance = new BigDecimal(yonghuEntity.getNewMoney())
+                .subtract(new BigDecimal(totalPrice)).doubleValue();
+        if(balance < 0)
+            return R.error(511,"余额不够支付");
+
+        shangpinOrder.setShangpinOrderTypes(101); //已支付
+        shangpinOrder.setShangpinOrderTruePrice(totalPrice);
+        shangpinOrder.setYonghuId(userId);
+        shangpinOrder.setShangpinOrderUuidNumber(String.valueOf(new Date().getTime()));
+        shangpinOrder.setShangpinOrderPaymentTypes(1); //余额支付
+        shangpinOrder.setInsertTime(new Date());
+        shangpinOrder.setCreateTime(new Date());
+
+        // 原子扣减库存：UPDATE shangpin SET kucun = kucun - buyNumber WHERE id = ? AND kucun >= buyNumber
+        boolean kucunDeducted = shangpinService.update(
+            new ShangpinEntity(){{ setShangpinKucunNumber(shangpinOrder.getBuyNumber() * -1); }},
+            new EntityWrapper<ShangpinEntity>()
+                .eq("id", shangpinEntity.getId())
+                .ge("shangpin_kucun_number", shangpinOrder.getBuyNumber())
+        );
+        if(!kucunDeducted)
+            return R.error(511,"库存不足，下单失败");
+
+        shangpinOrderService.insert(shangpinOrder);
+
+        // 扣减用户余额
+        yonghuEntity.setNewMoney(balance);
+        yonghuService.updateById(yonghuEntity);
+
+        // 增加店家收入
+        ShangjiaEntity shangjiaEntity = shangjiaService.selectById(shangpinEntity.getShangjiaId());
+        if(shangjiaEntity == null)
+            throw new RuntimeException("店家不存在");
+        if(shangjiaEntity.getNewMoney() == null)
+            shangjiaEntity.setNewMoney(0.0);
+        shangjiaEntity.setNewMoney(new BigDecimal(shangjiaEntity.getNewMoney())
+                .add(new BigDecimal(totalPrice)).doubleValue());
+        shangjiaService.updateById(shangjiaEntity);
+
+        return R.ok();
     }
     /**
-     * 添加订单
+     * 添加订单（多品下单）
      */
+    @Transactional
     @RequestMapping("/order")
     public R add(@RequestParam Map<String, Object> params, HttpServletRequest request){
         logger.debug("order方法:,,Controller:{},,params:{}",this.getClass().getName(),params.toString());
         String shangpinOrderUuidNumber = String.valueOf(new Date().getTime());
 
-        //获取当前登录用户的id
         Integer userId = (Integer) request.getSession().getAttribute("userId");
+        Integer shangpinOrderPaymentTypes = Integer.valueOf(String.valueOf(params.get("shangpinOrderPaymentTypes")));
 
-            Integer shangpinOrderPaymentTypes = Integer.valueOf(String.valueOf(params.get("shangpinOrderPaymentTypes")));//支付类型
+        // 明确拒绝积分支付
+        if(shangpinOrderPaymentTypes != null && shangpinOrderPaymentTypes == 2){
+            return R.error(511,"暂不支持积分支付");
+        }
 
         String data = String.valueOf(params.get("shangpins"));
         JSONArray jsonArray = JSON.parseArray(data);
         List<Map> shangpins = JSON.parseObject(jsonArray.toString(), List.class);
 
-        //获取当前登录用户的个人信息
         YonghuEntity yonghuEntity = yonghuService.selectById(userId);
+        if(yonghuEntity == null)
+            return R.error(511,"用户不能为空");
+        if(yonghuEntity.getNewMoney() == null)
+            return R.error(511,"用户金额不能为空");
 
-        //当前订单表
         List<ShangpinOrderEntity> shangpinOrderList = new ArrayList<>();
-        //商家表
-        ArrayList<ShangjiaEntity> shangjiaList = new ArrayList<>();
-        //商品表
-        List<ShangpinEntity> shangpinList = new ArrayList<>();
-        //购物车ids
         List<Integer> cartIds = new ArrayList<>();
 
-        BigDecimal zhekou = new BigDecimal(1.0);
+        BigDecimal totalCost = BigDecimal.ZERO;
+        // 用Map聚合店家维度的金额变动，避免同一店家被重复加载/覆盖
+        Map<Integer, Double> shangjiaAmountMap = new LinkedHashMap<>();
+        // 记录每个商品的原子扣减信息
+        List<int[]> kucunDeductions = new ArrayList<>(); // [shangpinId, buyNumber]
 
-        //循环取出需要的数据
         for (Map<String, Object> map : shangpins) {
-           //取值
-            Integer shangpinId = Integer.valueOf(String.valueOf(map.get("shangpinId")));//商品id
-            Integer buyNumber = Integer.valueOf(String.valueOf(map.get("buyNumber")));//购买数量
-            ShangpinEntity shangpinEntity = shangpinService.selectById(shangpinId);//购买的商品
+            Integer shangpinId = Integer.valueOf(String.valueOf(map.get("shangpinId")));
+            Integer buyNumber = Integer.valueOf(String.valueOf(map.get("buyNumber")));
             String id = String.valueOf(map.get("id"));
             if(StringUtil.isNotEmpty(id))
                 cartIds.add(Integer.valueOf(id));
-            //获取商家信息
-            Integer shangjiaId = shangpinEntity.getShangjiaId();
-            ShangjiaEntity shangjiaEntity = shangjiaService.selectById(shangjiaId);//商家
 
-            //判断商品的库存是否足够
+            ShangpinEntity shangpinEntity = shangpinService.selectById(shangpinId);
+            if(shangpinEntity == null)
+                return R.error(511,"商品id=" + shangpinId + "不存在");
             if(shangpinEntity.getShangpinKucunNumber() < buyNumber){
-                //商品库存不足直接返回
-                return R.error(shangpinEntity.getShangpinName()+"的库存不足");
-            }else{
-                //商品库存充足就减库存
-                shangpinEntity.setShangpinKucunNumber(shangpinEntity.getShangpinKucunNumber() - buyNumber);
+                return R.error(shangpinEntity.getShangpinName() + "的库存不足");
             }
 
-            //订单信息表增加数据
+            Integer shangjiaId = shangpinEntity.getShangjiaId();
+            ShangjiaEntity shangjiaEntity = shangjiaService.selectById(shangjiaId);
+            if(shangjiaEntity == null)
+                return R.error(511,"店家不存在");
+
+            // 余额支付
+            Double money = new BigDecimal(shangpinEntity.getShangpinNewMoney())
+                    .multiply(new BigDecimal(buyNumber)).doubleValue();
+            totalCost = totalCost.add(new BigDecimal(money));
+
+            if(totalCost.compareTo(new BigDecimal(yonghuEntity.getNewMoney())) > 0){
+                return R.error("余额不足,请充值！！！");
+            }
+
+            // 聚合店家收入（同一店家累加，防止同一店家多商品时被覆盖）
+            if(shangjiaEntity.getNewMoney() == null) shangjiaEntity.setNewMoney(0.0);
+            shangjiaAmountMap.merge(shangjiaId, money, Double::sum);
+
             ShangpinOrderEntity shangpinOrderEntity = new ShangpinOrderEntity<>();
+            shangpinOrderEntity.setShangpinOrderUuidNumber(shangpinOrderUuidNumber);
+            shangpinOrderEntity.setShangpinId(shangpinId);
+            shangpinOrderEntity.setYonghuId(userId);
+            shangpinOrderEntity.setBuyNumber(buyNumber);
+            shangpinOrderEntity.setShangpinOrderTypes(101); //已支付
+            shangpinOrderEntity.setShangpinOrderPaymentTypes(shangpinOrderPaymentTypes);
+            shangpinOrderEntity.setShangpinOrderTruePrice(money);
+            shangpinOrderEntity.setInsertTime(new Date());
+            shangpinOrderEntity.setCreateTime(new Date());
 
-            //赋值订单信息
-            shangpinOrderEntity.setShangpinOrderUuidNumber(shangpinOrderUuidNumber);//订单号
-            shangpinOrderEntity.setShangpinId(shangpinId);//商品
-                        shangpinOrderEntity.setYonghuId(userId);//用户
-            shangpinOrderEntity.setBuyNumber(buyNumber);//购买数量 ？？？？？？
-            shangpinOrderEntity.setShangpinOrderTypes(101);//订单类型
-            shangpinOrderEntity.setShangpinOrderPaymentTypes(shangpinOrderPaymentTypes);//支付类型
-            shangpinOrderEntity.setInsertTime(new Date());//订单创建时间
-            shangpinOrderEntity.setCreateTime(new Date());//创建时间
-
-            //判断是什么支付方式 1代表余额 2代表积分
-            if(shangpinOrderPaymentTypes == 1){//余额支付
-                //计算金额
-                Double money = new BigDecimal(shangpinEntity.getShangpinNewMoney()).multiply(new BigDecimal(buyNumber)).multiply(zhekou).doubleValue();
-
-                if(yonghuEntity.getNewMoney() - money <0 ){
-                    return R.error("余额不足,请充值！！！");
-                }else{
-                    //计算所获得积分
-                    Double buyJifen =0.0;
-                yonghuEntity.setNewMoney(yonghuEntity.getNewMoney() - money); //设置金额
-
-
-                    shangpinOrderEntity.setShangpinOrderTruePrice(money);
-
-                    //修改商家余额
-                    shangjiaEntity.setNewMoney(shangjiaEntity.getNewMoney()+money);
-                }
-            }
             shangpinOrderList.add(shangpinOrderEntity);
-            shangjiaList.add(shangjiaEntity);
-            shangpinList.add(shangpinEntity);
-
+            kucunDeductions.add(new int[]{shangpinId, buyNumber});
         }
+
+        // 1. 批量插入订单
         shangpinOrderService.insertBatch(shangpinOrderList);
-        shangjiaService.updateBatchById(shangjiaList);
-        shangpinService.updateBatchById(shangpinList);
+
+        // 2. 逐个原子扣减库存（防超卖）
+        for(int[] kd : kucunDeductions){
+            boolean ok = shangpinService.update(
+                new ShangpinEntity(){{ setShangpinKucunNumber(kd[1] * -1); }},
+                new EntityWrapper<ShangpinEntity>()
+                    .eq("id", kd[0])
+                    .ge("shangpin_kucun_number", kd[1])
+            );
+            if(!ok) throw new RuntimeException("库存不足，下单失败");
+        }
+
+        // 3. 聚合更新店家余额
+        for(Map.Entry<Integer, Double> entry : shangjiaAmountMap.entrySet()){
+            ShangjiaEntity sj = shangjiaService.selectById(entry.getKey());
+            if(sj == null || sj.getNewMoney() == null) sj = new ShangjiaEntity();
+            sj.setNewMoney(new BigDecimal(sj.getNewMoney() == null ? 0 : sj.getNewMoney())
+                    .add(new BigDecimal(entry.getValue())).doubleValue());
+            shangjiaService.updateById(sj);
+        }
+
+        // 4. 扣减用户余额
+        double newBalance = new BigDecimal(yonghuEntity.getNewMoney())
+                .subtract(totalCost).doubleValue();
+        yonghuEntity.setNewMoney(newBalance);
         yonghuService.updateById(yonghuEntity);
-        if(cartIds != null && cartIds.size()>0)
+
+        if(cartIds != null && cartIds.size() > 0)
             cartService.deleteBatchIds(cartIds);
 
         return R.ok();
@@ -478,71 +522,100 @@ public class ShangpinOrderController {
     /**
     * 退款
     */
+    @Transactional
     @RequestMapping("/refund")
     public R refund(Integer id, HttpServletRequest request){
         logger.debug("refund方法:,,Controller:{},,id:{}",this.getClass().getName(),id);
-        String role = String.valueOf(request.getSession().getAttribute("role"));
 
-            ShangpinOrderEntity shangpinOrder = shangpinOrderService.selectById(id);//当前表service
-            Integer buyNumber = shangpinOrder.getBuyNumber();
-            Integer shangpinOrderPaymentTypes = shangpinOrder.getShangpinOrderPaymentTypes();
-            Integer shangpinId = shangpinOrder.getShangpinId();
-            if(shangpinId == null)
-                return R.error(511,"查不到该商品");
-            ShangpinEntity shangpinEntity = shangpinService.selectById(shangpinId);
-            if(shangpinEntity == null)
-                return R.error(511,"查不到该商品");
-            //获取商家信息
-            Integer shangjiaId = shangpinEntity.getShangjiaId();
-            ShangjiaEntity shangjiaEntity = shangjiaService.selectById(shangjiaId);//商家
-            Double shangpinNewMoney = shangpinEntity.getShangpinNewMoney();
-            if(shangpinNewMoney == null)
-                return R.error(511,"商品价格不能为空");
+        ShangpinOrderEntity shangpinOrder = shangpinOrderService.selectById(id);
+        if(shangpinOrder == null)
+            return R.error(511,"查不到该订单");
 
-            Integer userId = (Integer) request.getSession().getAttribute("userId");
-            YonghuEntity yonghuEntity = yonghuService.selectById(userId);
-            if(yonghuEntity == null)
-                return R.error(511,"用户不能为空");
-            if(yonghuEntity.getNewMoney() == null)
+        // 只有已支付(101)状态允许退款
+        Integer currentStatus = shangpinOrder.getShangpinOrderTypes();
+        if(currentStatus == null || currentStatus != 101){
+            return R.error(511,"当前订单状态不允许退款");
+        }
+
+        Integer buyNumber = shangpinOrder.getBuyNumber();
+        Integer shangpinOrderPaymentTypes = shangpinOrder.getShangpinOrderPaymentTypes();
+        Integer shangpinId = shangpinOrder.getShangpinId();
+        if(shangpinId == null)
+            return R.error(511,"查不到该商品");
+
+        ShangpinEntity shangpinEntity = shangpinService.selectById(shangpinId);
+        if(shangpinEntity == null)
+            return R.error(511,"查不到该商品");
+        Double shangpinNewMoney = shangpinEntity.getShangpinNewMoney();
+        if(shangpinNewMoney == null)
+            return R.error(511,"商品价格不能为空");
+
+        Integer shangjiaId = shangpinEntity.getShangjiaId();
+        ShangjiaEntity shangjiaEntity = shangjiaService.selectById(shangjiaId);
+        if(shangjiaEntity == null)
+            return R.error(511,"店家不存在");
+
+        Integer userId = (Integer) request.getSession().getAttribute("userId");
+        YonghuEntity yonghuEntity = yonghuService.selectById(userId);
+        if(yonghuEntity == null)
+            return R.error(511,"用户不能为空");
+        if(yonghuEntity.getNewMoney() == null)
             return R.error(511,"用户金额不能为空");
-            Double zhekou = 1.0;
 
-            //判断是什么支付方式 1代表余额 2代表积分
-            if(shangpinOrderPaymentTypes == 1){//余额支付
-                //计算金额
-                Double money = shangpinEntity.getShangpinNewMoney() * buyNumber  * zhekou;
-                //计算所获得积分
-                Double buyJifen = 0.0;
-                yonghuEntity.setNewMoney(yonghuEntity.getNewMoney() + money); //设置金额
+        // 明确拒绝积分支付退款
+        if(shangpinOrderPaymentTypes != null && shangpinOrderPaymentTypes == 2){
+            return R.error(511,"暂不支持积分支付退款");
+        }
 
+        // 余额支付退款
+        if(shangpinOrderPaymentTypes == 1){
+            Double money = new BigDecimal(shangpinNewMoney)
+                    .multiply(new BigDecimal(buyNumber)).doubleValue();
 
-                //修改商家余额
-                shangjiaEntity.setNewMoney(shangjiaEntity.getNewMoney() - money);
+            // 校验店家余额是否足够退款
+            if(shangjiaEntity.getNewMoney() == null || shangjiaEntity.getNewMoney() < money){
+                return R.error(511,"店家余额不足，退款失败");
             }
 
-            shangpinEntity.setShangpinKucunNumber(shangpinEntity.getShangpinKucunNumber() + buyNumber);
+            // 退还用户余额
+            yonghuEntity.setNewMoney(new BigDecimal(yonghuEntity.getNewMoney())
+                    .add(new BigDecimal(money)).doubleValue());
+            // 扣减店家余额
+            shangjiaEntity.setNewMoney(new BigDecimal(shangjiaEntity.getNewMoney())
+                    .subtract(new BigDecimal(money)).doubleValue());
+        }
 
-            shangpinOrder.setShangpinOrderTypes(102);//设置订单状态为已退款
-            shangpinOrderService.updateAllColumnById(shangpinOrder);//根据id更新
-            shangjiaService.updateById(shangjiaEntity);
-            yonghuService.updateById(yonghuEntity);//更新用户信息
-            shangpinService.updateById(shangpinEntity);//更新订单中商品的信息
+        // 回滚库存
+        shangpinEntity.setShangpinKucunNumber(shangpinEntity.getShangpinKucunNumber() + buyNumber);
 
-            return R.ok();
+        // 更新状态为已退款
+        shangpinOrder.setShangpinOrderTypes(102);
+        shangpinOrderService.updateAllColumnById(shangpinOrder);
+        shangjiaService.updateById(shangjiaEntity);
+        yonghuService.updateById(yonghuEntity);
+        shangpinService.updateById(shangpinEntity);
+
+        return R.ok();
     }
 
     /**
-    * 评价
+    * 评价（只有已取餐104才能评价）
     */
     @RequestMapping("/commentback")
     public R commentback(Integer id, String commentbackText, Integer shangpinCommentbackPingfenNumber, HttpServletRequest request){
         logger.debug("commentback方法:,,Controller:{},,id:{}",this.getClass().getName(),id);
             ShangpinOrderEntity shangpinOrder = shangpinOrderService.selectById(id);
-        if(shangpinOrder == null)
-            return R.error(511,"查不到该订单");
-        Integer shangpinId = shangpinOrder.getShangpinId();
-        if(shangpinId == null)
-            return R.error(511,"查不到该商品");
+            if(shangpinOrder == null)
+                return R.error(511,"查不到该订单");
+
+            // 只有已取餐(104)状态才能评价
+            if(shangpinOrder.getShangpinOrderTypes() == null || shangpinOrder.getShangpinOrderTypes() != 104){
+                return R.error(511,"只有已取餐的订单才能评价");
+            }
+
+            Integer shangpinId = shangpinOrder.getShangpinId();
+            if(shangpinId == null)
+                return R.error(511,"查不到该商品");
 
         ShangpinCommentbackEntity shangpinCommentbackEntity = new ShangpinCommentbackEntity();
             shangpinCommentbackEntity.setId(id);
@@ -555,19 +628,27 @@ public class ShangpinOrderController {
             shangpinCommentbackEntity.setCreateTime(new Date());
             shangpinCommentbackService.insert(shangpinCommentbackEntity);
 
-            shangpinOrder.setShangpinOrderTypes(105);//设置订单状态为已评价
-            shangpinOrderService.updateById(shangpinOrder);//根据id更新
+            shangpinOrder.setShangpinOrderTypes(105);//已评价
+            shangpinOrderService.updateById(shangpinOrder);
             return R.ok();
     }
 
     /**
-     * 出餐
+     * 出餐（只有已支付101才能出餐）
      */
     @RequestMapping("/deliver")
     public R deliver(Integer id  , HttpServletRequest request){
-        logger.debug("refund:,,Controller:{},,ids:{}",this.getClass().getName(),id.toString());
+        logger.debug("deliver:,,Controller:{},,ids:{}",this.getClass().getName(),id.toString());
         ShangpinOrderEntity  shangpinOrderEntity = shangpinOrderService.selectById(id);
-        shangpinOrderEntity.setShangpinOrderTypes(103);//设置订单状态为已出餐
+        if(shangpinOrderEntity == null)
+            return R.error(511,"查不到该订单");
+
+        // 只有已支付(101)状态才能出餐
+        if(shangpinOrderEntity.getShangpinOrderTypes() == null || shangpinOrderEntity.getShangpinOrderTypes() != 101){
+            return R.error(511,"只有已支付的订单才能出餐");
+        }
+
+        shangpinOrderEntity.setShangpinOrderTypes(103);//已出餐
         shangpinOrderService.updateById( shangpinOrderEntity);
 
         return R.ok();
@@ -575,13 +656,21 @@ public class ShangpinOrderController {
 
 
     /**
-     * 取餐
+     * 取餐（只有已出餐103才能取餐）
      */
     @RequestMapping("/receiving")
     public R receiving(Integer id , HttpServletRequest request){
-        logger.debug("refund:,,Controller:{},,ids:{}",this.getClass().getName(),id.toString());
+        logger.debug("receiving:,,Controller:{},,ids:{}",this.getClass().getName(),id.toString());
         ShangpinOrderEntity  shangpinOrderEntity = shangpinOrderService.selectById(id);
-        shangpinOrderEntity.setShangpinOrderTypes(104);//设置订单状态为取餐
+        if(shangpinOrderEntity == null)
+            return R.error(511,"查不到该订单");
+
+        // 只有已出餐(103)状态才能取餐
+        if(shangpinOrderEntity.getShangpinOrderTypes() == null || shangpinOrderEntity.getShangpinOrderTypes() != 103){
+            return R.error(511,"只有已出餐的订单才能取餐");
+        }
+
+        shangpinOrderEntity.setShangpinOrderTypes(104);//已取餐
         shangpinOrderService.updateById( shangpinOrderEntity);
         return R.ok();
     }
